@@ -14,5 +14,4 @@ MonoBehaviour:
   id: combination_lock
   title: Combination Lock
   version: 1
-  outputFolder: C:\Program Files (x86)\Steam\steamapps\common\Keep Talking and Nobody
-    Explodes\mods
+  outputFolder: build
