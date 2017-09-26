@@ -37,6 +37,8 @@ public class TwoFactorWidget : MonoBehaviour
 
 	private void Activate()
 	{
+		Debug.Log("[TwoFactorWidget] Two Factor present");
+
 		_timeElapsed = 0f;
 		DisplayKey();
 	}

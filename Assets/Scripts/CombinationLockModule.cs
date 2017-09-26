@@ -1,7 +1,10 @@
-﻿using System.Collections.Generic;
+﻿using System.Linq;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using Newtonsoft.Json;
 using UnityEngine;
+using System.Collections;
+using System;
 
 [SuppressMessage("ReSharper", "UseStringInterpolation")]
 [SuppressMessage("ReSharper", "LoopCanBeConvertedToQuery")]
@@ -27,6 +30,10 @@ public class CombinationLockModule : MonoBehaviour
 	public AudioClip DialReset;
 	public AudioClip Unlock;
 
+	private KMBombModule BombModule;
+	private KMBombInfo BombInfo;
+	private KMAudio Audio;
+
 	private IList<int> _inputCode;
 	private IList<int> _code;
 	private int _currentInput;
@@ -42,17 +49,26 @@ public class CombinationLockModule : MonoBehaviour
 	{
 		_isActive = true;
 		GeneratePassCode();
-		Debug.Log(string.Format("{0} {1} {2}", _code[0], _code[1], _code[2]));
+		BombModule.LogFormat("Initial solution: {0} {1} {2}", _code[0], _code[1], _code[2]);
+
+		StartCoroutine(LogSolution());
 	}
 
 	private void Init()
 	{
+		BombModule = GetComponent<KMBombModule>();
+		BombModule.GenerateLogFriendlyName();
+
+		BombInfo = GetComponent<KMBombInfo>();
+
+		Audio = GetComponent<KMAudio>();
+
 		_currentInput = 0;
 		_currentDirection = Direction.Right;
 		_inputCode = new List<int>(3);
 		_code = new List<int>(3);
 		SetupButtons();
-		GetComponent<KMBombModule>().OnActivate += Activate;
+		BombModule.OnActivate += Activate;
 	}
 
 	void Update()
@@ -61,8 +77,10 @@ public class CombinationLockModule : MonoBehaviour
 		if (_isActive && Solved())
 		{
 			_isActive = false;
-			GetComponent<KMAudio>().HandlePlaySoundAtTransform(Unlock.name, transform);
-			GetComponent<KMBombModule>().HandlePass();
+			Audio.HandlePlaySoundAtTransform(Unlock.name, transform);
+			BombModule.HandlePass();
+
+			BombModule.Log("Module solved");
 		}
 	}
 
@@ -92,7 +110,7 @@ public class CombinationLockModule : MonoBehaviour
 			if (_currentDirection != Direction.Left)
 			{
 				_inputCode.Add(_currentInput);
-				Debug.Log(_currentInput);
+				BombModule.LogFormat("Turned left to: {0}", _currentInput);
 			}
 
 			Dial.transform.Rotate(0f, DialIncrement, 0f);
@@ -104,7 +122,7 @@ public class CombinationLockModule : MonoBehaviour
 			_currentDirection = Direction.Left;
 			DialText.text = _currentInput.ToString();
 
-			GetComponent<KMAudio>().HandlePlaySoundAtTransform(DialClick.name, transform);
+			Audio.HandlePlaySoundAtTransform(DialClick.name, transform);
 
 			return false;
 		};
@@ -114,7 +132,7 @@ public class CombinationLockModule : MonoBehaviour
 			if (_currentDirection != Direction.Right)
 			{
 				_inputCode.Add(_currentInput);
-				Debug.Log(_currentInput);
+				BombModule.LogFormat("Turned right to: {0}", _currentInput);
 			}
 
 			Dial.transform.Rotate(0f, -DialIncrement, 0f);
@@ -131,13 +149,15 @@ public class CombinationLockModule : MonoBehaviour
 			_currentDirection = Direction.Right;
 			DialText.text = _currentInput.ToString();
 
-			GetComponent<KMAudio>().HandlePlaySoundAtTransform(DialClick.name, transform);
+			Audio.HandlePlaySoundAtTransform(DialClick.name, transform);
 
 			return false;
 		};
 
 		ResetButton.OnInteract += delegate
 		{
+			BombModule.Log("Pressed reset");
+
 			Dial.transform.Rotate(0f, DialIncrement * _currentInput, 0f);
 
 			_currentInput = 0;
@@ -145,7 +165,7 @@ public class CombinationLockModule : MonoBehaviour
 			_inputCode = new List<int>(3);
 			DialText.text = _currentInput.ToString();
 
-			GetComponent<KMAudio>().HandlePlaySoundAtTransform(DialReset.name, transform);
+			Audio.HandlePlaySoundAtTransform(DialReset.name, transform);
 
 			return false;
 		};
@@ -154,15 +174,13 @@ public class CombinationLockModule : MonoBehaviour
 	private void GeneratePassCode()
 	{
 		_code.Clear();
-		var bombInfo = GetComponent<KMBombInfo>();
-		var twoFactor = GetTwoFactorCodes(bombInfo);
-		var batteryCount = GetNumberOfBatteries(bombInfo);
-		var numberOfSolvedModules = GetNumberOfSolvedModules(bombInfo);
+		var twoFactor = BombInfo.GetTwoFactorCodes();
+		var numberOfSolvedModules = BombInfo.GetSolvedModuleNames().Count;
 
 		var code1 = 0;
 		var code2 = 0;
 
-		if (twoFactor != null && twoFactor.Count > 0)
+		if (twoFactor != null && twoFactor.Count() > 0)
 		{
 			foreach (var twoFactorCode in twoFactor)
 			{
@@ -173,86 +191,98 @@ public class CombinationLockModule : MonoBehaviour
 		}
 		else
 		{
-			code1 = GetLastDigitSerial(bombInfo) + numberOfSolvedModules;
-			code2 = GetNumberOfModules(bombInfo);
+			code1 = BombInfo.GetSerialNumberNumbers().Last() + numberOfSolvedModules;
+			code2 = BombInfo.GetModuleNames().Count;
 		}
 
-		code1 += batteryCount;
+		code1 += BombInfo.GetBatteryCount();
 		code2 += numberOfSolvedModules;
 
-		code1 = code1 >= Max ? code1 - Max : code1;
-		code2 = code2 >= Max ? code2 - Max : code2;
+		code1 = code1 >= Max ? code1 % Max : code1;
+		code2 = code2 >= Max ? code2 % Max : code2;
 
 		var code3 = code1 + code2;
-		code3 = code3 >= Max ? code3 - Max : code3;
+		code3 = code3 >= Max ? code3 % Max : code3;
 
 		_code.Add(code1);
 		_code.Add(code2);
 		_code.Add(code3);
 	}
 
-	private static IList<int> GetTwoFactorCodes(KMBombInfo bombInfo)
+	private IEnumerator LogSolution()
 	{
-		var twoFactorCodes = new List<int> {};
+		int solved = BombInfo.GetSolvedModuleNames().Count;
+		IEnumerable<int> twoFactorCodes = BombInfo.GetTwoFactorCodes();
 
-		if (bombInfo == null)
+		do
 		{
-			twoFactorCodes.Add(201928);
-			twoFactorCodes.Add(501929);
-		}
-		else
-		{
-			var responses = bombInfo.QueryWidgets(TwoFactorWidget.WidgetQueryTwofactor, null);
-
-			foreach (var response in responses)
+			yield return new WaitForSeconds(0.1f);
+			int newSolved = BombInfo.GetSolvedModuleNames().Count;
+			IEnumerable<int> newTwoFactorCodes = BombInfo.GetTwoFactorCodes();
+			if ((!twoFactorCodes.SequenceEqual(newTwoFactorCodes) || solved != newSolved) && _isActive)
 			{
-				var responseDict = JsonConvert.DeserializeObject<Dictionary<string, int>>(response);
-				twoFactorCodes.Add(responseDict[TwoFactorWidget.WidgetTwofactorKey]);
+				GeneratePassCode();
+				
+				if (solved != newSolved)
+				{
+					BombModule.LogFormat("Number of solved modules: {0}", newSolved);
+				}
+
+				if (!twoFactorCodes.SequenceEqual(newTwoFactorCodes))
+				{
+					foreach (int twoFactorCode in newTwoFactorCodes)
+					{
+						BombModule.LogFormat("Two Factor code changed: {0}", twoFactorCode);
+					}
+				}
+
+				BombModule.LogFormat("New solution: {0} {1} {2}", _code[0], _code[1], _code[2]);
+
+				solved = newSolved;
+				twoFactorCodes = newTwoFactorCodes;
+			}
+		} while (_isActive);
+	}
+
+	private int? TryParse(string input)
+	{
+		int i;
+		return int.TryParse(input, out i) ? (int?) i : null;
+	}
+
+	public IEnumerator ProcessTwitchCommand(string command)
+	{
+		string[] split = command.ToLowerInvariant().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+
+		if (split.Length == 4 && split[0] == "submit")
+		{
+			if (_inputCode.Count > 0)
+			{
+				ResetButton.OnInteract();
+				yield return new WaitForSeconds(1f);
+			}
+
+			int?[] numbers = split.Where((_, i) => i > 0).Select(num => TryParse(num)).ToArray();
+			if (numbers.All(num => num != null && num > -1 && num < 20))
+			{ 
+				bool turnDirection = false; // true for left, false for right 
+				foreach (int num in numbers)
+				{
+					KMSelectable button = turnDirection ? LeftButton : RightButton;
+					button.OnInteract();
+						yield return new WaitForSeconds(0.1f);
+
+					while (_currentInput != num)
+					{
+						button.OnInteract();
+						yield return new WaitForSeconds(0.1f);
+					}
+
+					yield return new WaitForSeconds(0.3f);
+
+					turnDirection = !turnDirection;
+				}
 			}
 		}
-
-		return twoFactorCodes;
-	}
-
-	private static int GetLastDigitSerial(KMBombInfo bombInfo)
-	{
-		var serial = "IE7E63";
-
-		// ReSharper disable once InvertIf
-		if (bombInfo != null)
-		{
-            var responses = bombInfo.QueryWidgets(KMBombInfo.QUERYKEY_GET_SERIAL_NUMBER, null);
-
-            if (responses.Count > 0)
-                serial = JsonConvert.DeserializeObject<Dictionary<string, string>>(responses[0])["serial"];
-		}
-
-		return int.Parse(serial[serial.Length - 1].ToString());
-	}
-
-	private static int GetNumberOfModules(KMBombInfo bombInfo)
-	{
-		return bombInfo == null ? 3 : bombInfo.GetModuleNames().Count;
-	}
-
-	private static int GetNumberOfSolvedModules(KMBombInfo bombInfo)
-	{
-		return bombInfo == null ? 1 : bombInfo.GetSolvedModuleNames().Count;
-	}
-
-	private static int GetNumberOfBatteries(KMBombInfo bombInfo)
-	{
-		if (bombInfo == null) return 1;
-
-		var batteryCount = 0;
-		var responses = bombInfo.QueryWidgets(KMBombInfo.QUERYKEY_GET_BATTERIES, null);
-
-		foreach (var response in responses)
-		{
-			var responseDict = JsonConvert.DeserializeObject<Dictionary<string, int>>(response);
-			batteryCount += responseDict["numbatteries"];
-		}
-
-		return batteryCount;
 	}
 }
